@@ -56,7 +56,6 @@ jobs:
           #   Currently we only publish unstable Helm charts from main/HEAD.
           #   We have no active cleanup of old unstable charts in place. In
           #   between new tags unstable chart have the same version, though.
-          pushd $UNSTABLE_CHARTS
           for i in ./*.tgz; do
               helm push $i oci://${{ env.REGISTRY }}/${{ env.REGISTRY_PATH }}/helm-charts
           done
