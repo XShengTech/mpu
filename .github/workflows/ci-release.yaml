@@ -90,11 +90,23 @@ jobs:
       - name: Push Unstable Helm Charts To Registry
         shell: bash
         run: |
-          # Notes:
-          #   Currently we only publish unstable Helm charts from main/HEAD.
-          #   We have no active cleanup of old unstable charts in place. In
-          #   between new tags unstable chart have the same version, though.
-          for i in ./*.tgz; do
-              helm push $i oci://${{ env.REGISTRY }}/${{ env.REGISTRY_USER }}
-          done
-          popd
+          GITREF=${{ github.ref }}
+          echo "  - digging out tag from git ref $GITREF..."
+          case $GITREF in
+              refs/tags/v*)
+                  tag="${GITREF#refs/tags/}"
+                  ;;
+              refs/heads/main)
+                  tag=unstable
+                  ;;
+              refs/heads/release-*)
+                  tag="${GITREF#refs/heads/release-}-unstable"
+                  ;;
+              *)
+                  echo "error: can't determine tag."
+                  exit 1
+                  ;;
+          esac
+          echo "  - tag: $tag" 
+          new_version=${tag#v}
+          helm push mpu-$new_version.tgz oci://${{ env.REGISTRY }}/${{ env.REGISTRY_USER }}

@@ -37,7 +37,7 @@ check_module_file() {
 
 install_module() {
     echo -e "${YELLOW}Attempting to install module...${NC}"
-    if sudo insmod "${MODULE_FILE}"; then
+    if  insmod "${MODULE_FILE}"; then
         echo -e "${GREEN}Module installed successfully${NC}"
         return 0
     else
@@ -48,7 +48,7 @@ install_module() {
 
 uninstall_module() {
     echo -e "${YELLOW}Uninstalling module...${NC}"
-    if sudo rmmod "${MODULE_NAME}"; then
+    if  rmmod "${MODULE_NAME}"; then
         echo -e "${GREEN}Module uninstalled successfully${NC}"
         return 0
     else
