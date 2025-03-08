@@ -41,10 +41,8 @@ jobs:
       - name: Push images
         env:
           IMAGE_VERSION: "dev"
-          REGISTRY: ghcr.io
-          REGISTRY_PATH: ${{ github.repository }}
         run: |
-          docker push $(REGISTRY)/$(REGISTRY_PATH):$(IMAGE_VERSION)
+          docker push ${{ env.REGISTRY }}/${{ env.REGISTRY_PATH }}:${{ env.IMAGE_VERSION }}
 
       - name: Package Unstable Helm Charts
         id: package-charts
@@ -55,9 +53,6 @@ jobs:
 
       - name: Push Unstable Helm Charts To Registry
         shell: bash
-        env:
-          REGISTRY: ghcr.io
-          REGISTRY_PATH: ${{ github.repository }}
         run: |
           # Notes:
           #   Currently we only publish unstable Helm charts from main/HEAD.

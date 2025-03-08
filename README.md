@@ -1,6 +1,19 @@
 # MPU
 A shim driver allows in-docker nvidia-smi showing correct process list without modify anything.
 
+# Use in kubernetes
+
+1. Download the latest release of the mpu.
+```shell
+$ helm repo add mpu-charts https://lengrongfu.github.io/mpu
+helm repo update
+```
+
+2. Deploy the mpu to your Kubernetes cluster.
+```shell
+$ helm install mpu mpu-charts/mpu -n mpu-system
+```
+
 # The problems
 The NVIDIA driver is not aware of the PID namespace and nvidia-smi has no capability to map global pid to virtual pid, thus it shows nothing.
 What's more, The NVIDIA driver is proprietary and we have no idea what's going on inside even small part of the Linux NVIDIA driver is open sourced.

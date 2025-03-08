@@ -55,9 +55,6 @@ jobs:
           IMAGE_VERSION=$tag make images
 
       - name: Push images
-        env:
-          REGISTRY: ghcr.io
-          REGISTRY_PATH: ${{ github.repository }}
         run: |
           echo "  - digging out tag from git ref $GITREF..."
           case $GITREF in
@@ -75,8 +72,8 @@ jobs:
                   exit 1
                   ;;
           esac
-          echo "  - tag: $tag"            
-          IMAGE_VERSION=$tag docker push $(REGISTRY)/$(REGISTRY_PATH):$(IMAGE_VERSION)
+          echo "  - tag: $tag" 
+          docker push ${{ env.REGISTRY }}/${{ env.REGISTRY_PATH }}:$tag
 
 
       - name: Package Unstable Helm Charts
@@ -86,9 +83,6 @@ jobs:
 
       - name: Push Unstable Helm Charts To Registry
         shell: bash
-        env:
-          REGISTRY: ghcr.io
-          REGISTRY_PATH: ${{ github.repository }}
         run: |
           # Notes:
           #   Currently we only publish unstable Helm charts from main/HEAD.
