@@ -79,7 +79,7 @@ jobs:
       - name: Package Unstable Helm Charts
         id: package-charts
         run: |
-          helm package --version "$CHART_VERSION" "$CHARTS_DIR"
+          helm package "$CHARTS_DIR"
 
       - name: Push Unstable Helm Charts To Registry
         shell: bash

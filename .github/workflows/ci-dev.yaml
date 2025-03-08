@@ -46,10 +46,8 @@ jobs:
 
       - name: Package Unstable Helm Charts
         id: package-charts
-        env:
-          CHART_VERSION: ${UNSTABLE_CHARTS}
         run: |
-          helm package --version "$CHART_VERSION" "$CHARTS_DIR"
+          helm package --version ${{ env.UNSTABLE_CHARTS }} "$CHARTS_DIR"
 
       - name: Push Unstable Helm Charts To Registry
         shell: bash
