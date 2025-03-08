@@ -40,7 +40,6 @@ jobs:
           GITREF=${{ github.ref }}
           IMAGE_LOCATION=${{ env.REGISTRY }}/${{ env.REGISTRY_USER }}
           img=mpu
-          cd output/
           echo "- Publishing image for tarball $img..."
           docker load -i $img.tar
           echo "  - image:  $img"

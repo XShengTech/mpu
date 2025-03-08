@@ -2,11 +2,10 @@ name: Package Helm charts
 
 on:
   push:
-    tags:
-      - v[0-9]+.[0-9]+.[0-9]+
     branches:
       - main
-      - release-*
+    tags:
+      - v*
 
 env:
   CHARTS_DIR: charts/mpu
@@ -43,6 +42,10 @@ jobs:
           echo "CHARTS_DIR=${CHARTS_DIR}"
           echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
           echo "majmin=${majmin}"
+          if [ ${majmin} = "" ]; then
+            majmin=dev
+            echo "majmin=${majmin}"
+          fi
           # Package charts
           CHART_VERSION="${majmin}-unstable"
           if [  $GITHUB_REF_NAME = "main" ]; then
