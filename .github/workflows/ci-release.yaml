@@ -55,6 +55,9 @@ jobs:
           IMAGE_VERSION=$tag make images
 
       - name: Push images
+        env:
+          REGISTRY: ghcr.io
+          REGISTRY_PATH: ${{ github.repository }}
         run: |
           echo "  - digging out tag from git ref $GITREF..."
           case $GITREF in
@@ -83,6 +86,9 @@ jobs:
 
       - name: Push Unstable Helm Charts To Registry
         shell: bash
+        env:
+          REGISTRY: ghcr.io
+          REGISTRY_PATH: ${{ github.repository }}
         run: |
           # Notes:
           #   Currently we only publish unstable Helm charts from main/HEAD.
