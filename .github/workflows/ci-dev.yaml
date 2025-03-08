@@ -1,4 +1,4 @@
-name: Build image And Package Helm charts
+name: Dev Build image And Package Helm charts
 
 on:
   push:
@@ -62,6 +62,6 @@ jobs:
           #   We have no active cleanup of old unstable charts in place. In
           #   between new tags unstable chart have the same version, though.
           for i in ./*.tgz; do
-              helm push $i oci://${{ env.REGISTRY }}/${{ env.REGISTRY_PATH }}/helm-charts
+              helm push $i oci://${{ env.REGISTRY }}/${{ env.REGISTRY_USER }}
           done
           popd
