@@ -1,9 +1,11 @@
 name: helm linter
 
 on:
-  pull_request:
-    paths:
-      - 'charts/**'
+  push:
+    branches:
+      - main
+    tags:
+      - v*
 
 jobs:
   lint-test:

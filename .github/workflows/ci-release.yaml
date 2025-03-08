@@ -1,0 +1,95 @@
+name: Build image And Package Helm charts
+
+on:
+  push:
+    tags:
+      - v*
+
+
+env:
+  REGISTRY: ghcr.io
+  REGISTRY_USER: ${{ github.repository_owner }}
+  REGISTRY_PATH: ${{ github.repository }}
+  CHARTS_DIR: charts/mpu
+
+jobs:
+  build-and-publish-images:
+    runs-on: ubuntu-22.04
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4.0.0
+
+      - name: Log in to registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+              docker login ${{ env.REGISTRY }} -u ${{ env.REGISTRY_USER }} --password-stdin
+      - name: Build images
+        env:
+        run: |
+          echo "  - digging out tag from git ref $GITREF..."
+          case $GITREF in
+              refs/tags/v*)
+                  tag="${GITREF#refs/tags/}"
+                  ;;
+              refs/heads/main)
+                  tag=unstable
+                  ;;
+              refs/heads/release-*)
+                  tag="${GITREF#refs/heads/release-}-unstable"
+                  ;;
+              *)
+                  echo "error: can't determine tag."
+                  exit 1
+                  ;;
+          esac
+          echo "  - tag: $tag"
+          IMAGE_VERSION=$tag make images
+
+      - name: Push images
+        run: |
+          echo "  - digging out tag from git ref $GITREF..."
+          case $GITREF in
+              refs/tags/v*)
+                  tag="${GITREF#refs/tags/}"
+                  ;;
+              refs/heads/main)
+                  tag=unstable
+                  ;;
+              refs/heads/release-*)
+                  tag="${GITREF#refs/heads/release-}-unstable"
+                  ;;
+              *)
+                  echo "error: can't determine tag."
+                  exit 1
+                  ;;
+          esac
+          echo "  - tag: $tag"            
+          IMAGE_VERSION=$tag docker push $(REGISTRY)/$(REGISTRY_PATH):$(IMAGE_VERSION)
+
+
+      - name: Package Unstable Helm Charts
+        id: package-charts
+        run: |
+          helm package --version "$CHART_VERSION" "$CHARTS_DIR"
+
+      - name: Push Unstable Helm Charts To Registry
+        shell: bash
+        run: |
+          # Notes:
+          #   Currently we only publish unstable Helm charts from main/HEAD.
+          #   We have no active cleanup of old unstable charts in place. In
+          #   between new tags unstable chart have the same version, though.
+          pushd $UNSTABLE_CHARTS
+          for i in ./*.tgz; do
+              helm push $i oci://${{ env.REGISTRY }}/${{ env.REGISTRY_PATH }}/helm-charts
+          done
+          popd

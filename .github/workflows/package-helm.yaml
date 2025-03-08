@@ -1,11 +1,5 @@
 name: Package Helm charts
 
-on:
-  push:
-    branches:
-      - main
-    tags:
-      - v*
 
 env:
   CHARTS_DIR: charts/mpu
