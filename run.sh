@@ -35,6 +35,14 @@ check_module_file() {
     fi
 }
 
+install_ () {
+  apt-get update && apt-get install -y build-essential && apt-get install -y linux-headers-$(uname -r) kmod
+}
+
+build_ko(){
+  make
+}
+
 install_module() {
     echo -e "${YELLOW}Attempting to install module...${NC}"
     if  insmod "${MODULE_FILE}"; then
@@ -58,7 +66,7 @@ uninstall_module() {
 }
 
 handle_install() {
-    check_module_file
+    install_
     local replace="${REPLACE:-false}"
     local is_loaded=false
 
@@ -75,10 +83,12 @@ handle_install() {
                 echo -e "${YELLOW}REPLACE mode: Reinstalling module...${NC}"
                 uninstall_module || return $?
             fi
+            build_ko
             install_module
             ;;
         false)
             if ! "${is_loaded}"; then
+                build_ko
                 install_module
             else
                 echo -e "${GREEN}Module already loaded and REPLACE=false. Skipping.${NC}"

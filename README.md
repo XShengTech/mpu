@@ -3,15 +3,9 @@ A shim driver allows in-docker nvidia-smi showing correct process list without m
 
 # Use in kubernetes
 
-1. Download the latest release of the mpu.
+1. Deploy the mpu to your Kubernetes cluster.
 ```shell
-$ helm repo add mpu-charts https://lengrongfu.github.io/mpu
-helm repo update
-```
-
-2. Deploy the mpu to your Kubernetes cluster.
-```shell
-$ helm install mpu mpu-charts/mpu -n mpu-system
+$ helm install mpu oci://ghcr.io/lengrongfu/mpu --version 0.0.1
 ```
 
 # The problems
