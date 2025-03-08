@@ -1,0 +1,3 @@
+owner: lengrongfu
+git-repo: mpu
+release-name-template: "{{ .Version }}"

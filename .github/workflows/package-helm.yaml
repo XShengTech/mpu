@@ -1,0 +1,76 @@
+name: Package Helm charts
+
+on:
+  push:
+    tags:
+      - v[0-9]+.[0-9]+.[0-9]+
+    branches:
+      - main
+      - release-*
+
+env:
+  CHARTS_DIR: charts/mpu
+  UNSTABLE_CHARTS: unstable-helm-charts
+  REGISTRY: ghcr.io
+  REGISTRY_USER: ${{ github.repository_owner }}
+  REGISTRY_PATH: ${{ github.repository }}
+
+jobs:
+  unstable:
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    concurrency:
+      group: unstable-helm-charts
+      cancel-in-progress: false
+    permissions:
+      packages: write
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Deep Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4.0.0
+
+      - name: Package Unstable Helm Charts
+        id: package-charts
+        run: |
+          # For unstable chart version we use:
+          #   - chart version: x.y-unstable derived from the latest tag x.y.z
+          #   - image version: 'unstable'.
+          majmin="$(git describe --tags | sed -E 's/(v[0-9]*\.[0-9]*).*$/\1/')"
+          echo "CHARTS_DIR=${CHARTS_DIR}"
+          echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
+          echo "majmin=${majmin}"
+          # Package charts
+          CHART_VERSION="${majmin}-unstable"
+          if [  $GITHUB_REF_NAME = "main" ]; then
+              APP_VERSION=unstable
+          else
+              APP_VERSION="${majmin}-unstable"
+          fi
+          # Package charts
+          echo "CHART_VERSION=${CHART_VERSION}"
+          echo "APP_VERSION=${APP_VERSION}"
+          echo "package..."
+          helm package --version "$CHART_VERSION" --app-version $APP_VERSION "$CHARTS_DIR"
+          echo "package done"
+
+      - name: Log In To Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+              helm registry login ${{ env.REGISTRY }}/${{ env.REGISTRY_PATH }} -u ${{ env.REGISTRY_USER }} --password-stdin
+
+      - name: Push Unstable Helm Charts To Registry
+        shell: bash
+        run: |
+          # Notes:
+          #   Currently we only publish unstable Helm charts from main/HEAD.
+          #   We have no active cleanup of old unstable charts in place. In
+          #   between new tags unstable chart have the same version, though.
+          pushd $UNSTABLE_CHARTS
+          for i in ./*.tgz; do
+              helm push $i oci://${{ env.REGISTRY }}/${{ env.REGISTRY_PATH }}/helm-charts
+          done
+          popd

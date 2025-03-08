@@ -16,6 +16,10 @@
 //  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 #include "mpu_syscall_hook.h"
+#include <linux/module.h>
+#include <linux/kprobes.h>
+#include <linux/kallsyms.h>
+#include <linux/version.h>
 
 #include <linux/syscalls.h>
 #include <linux/cgroup.h>
@@ -106,6 +110,13 @@ static void write_syscall(unsigned long **syscall_tbl, ioctl_fn sys_ioctl)
   WRITE_CR0(local_cr0);
 }
 
+typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
+static kallsyms_lookup_name_t my_kallsyms_lookup_name;
+
+static struct kprobe kp = {
+        .symbol_name = "kallsyms_lookup_name"
+};
+
 int mpu_init_ioctl_hook(mpu_module_t *module, mpu_ctx_t *ctx)
 {
   unsigned long **syscall_tbl;
@@ -115,8 +126,28 @@ int mpu_init_ioctl_hook(mpu_module_t *module, mpu_ctx_t *ctx)
   {
     return -EINVAL;
   }
-
-  syscall_tbl = (unsigned long **)(kallsyms_lookup_name("sys_call_table"));
+    int ret;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,7,0)
+    // 动态获取 kallsyms_lookup_name 地址（5.7+）
+    ret = register_kprobe(&kp);
+    if (ret < 0) {
+        pr_err("kprobe register failed: %d\n", ret);
+        return ret;
+    }
+    // 保存符号地址并卸载 kprobe
+    my_kallsyms_lookup_name = (kallsyms_lookup_name_t)kp.addr;
+    unregister_kprobe(&kp);
+#else
+    // 旧内核直接使用导出的符号
+    my_kallsyms_lookup_name = kallsyms_lookup_name;
+#endif
+//    syscall_tbl = (unsigned long **)kallsyms_lookup_name("sys_call_table");
+    if (!my_kallsyms_lookup_name) {
+        pr_err("kallsyms_lookup_name not found\n");
+        return -ENOENT;
+    }
+    // 查找 sys_call_table
+    syscall_tbl = (unsigned long **)my_kallsyms_lookup_name("sys_call_table");
   if (!syscall_tbl)
   {
     return -ENXIO;
