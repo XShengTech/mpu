@@ -7,6 +7,6 @@ RUN make
 FROM ubuntu:22.04 AS run
 WORKDIR /mpu
 COPY --from=build /mpu/mpu.ko /mpu
-COPY --from=build /mpu/Makefile /mpu
+COPY --from=build /mpu/run.sh /mpu
 RUN apt-get update && apt-get install -y kmod
 CMD ["/bin/sh", "-c", "bash run.sh install && sleep infinity"]
