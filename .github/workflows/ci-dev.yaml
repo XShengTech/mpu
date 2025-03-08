@@ -57,11 +57,4 @@ jobs:
       - name: Push Unstable Helm Charts To Registry
         shell: bash
         run: |
-          # Notes:
-          #   Currently we only publish unstable Helm charts from main/HEAD.
-          #   We have no active cleanup of old unstable charts in place. In
-          #   between new tags unstable chart have the same version, though.
-          for i in ./*.tgz; do
-              helm push $i oci://${{ env.REGISTRY }}/${{ env.REGISTRY_USER }}
-          done
-          popd
+          helm push mpu-${{ env.UNSTABLE_CHARTS }}.tgz oci://${{ env.REGISTRY }}/${{ env.REGISTRY_USER }}
