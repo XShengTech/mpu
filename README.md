@@ -49,8 +49,9 @@ NOTE: kernel 5.7.7 build routines don't export kallsyms kernel functions any lon
 
 # NOTE
 tested on 
-- _kernel 4.15.0-136 x64_ , _docker 19.03.15_ , _NVIDIA driver 440.64_
-- _kernel 4.19.0-14 x64_,  _NVIDIA driver 460.32_
+- Ubuntu 22.04, kernel 5.15.0-133 x64, docker 28.0.1, NVIDIA driver 550.135
+- Ubuntu 24.04, kernel 6.8.0-55 x64, docker 28.0.1, NVIDIA driver 550.135
+- Ubuntu 24.04, kernel 6.8.0-55 x64, docker 28.0.1, NVIDIA driver 570.124.04
 
 ---
 Afterwords, we'd like to maintain the project with fully tested and more kernels and NVIDIA drivers supported. 
