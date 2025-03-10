@@ -15,167 +15,189 @@
 //  with this program; if not, write to the Free Software Foundation, Inc.,
 //  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "mpu_syscall_hook.h"
 #include <linux/module.h>
-#include <linux/kprobes.h>
-#include <linux/kallsyms.h>
+#include <linux/kernel.h>
 #include <linux/version.h>
-
+#include <linux/ftrace.h>
+#include <linux/kprobes.h>
+#include <linux/fs.h>
+#include <linux/uaccess.h>
 #include <linux/syscalls.h>
-#include <linux/cgroup.h>
-#include <asm/paravirt.h>
-#include <linux/slab.h>
-#include <linux/file.h>
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0))
-#define FILE_INODE(f) (f->f_inode)
-#else
-#define FILE_INODE(f) (f->f_path.dentry->d_inode)
-#endif // FILE_INODE
+static char saved_syscall_name[64];
 
-// kernel 4.17 introduces syscall wrapper
+// 定义所需结构体和类型
+typedef struct mpu_ioctl_call
+{
+  unsigned int fd;
+  unsigned int cmd;
+  unsigned long arg;
+} mpu_ioctl_call_t;
+
+typedef struct mpu_ctx
+{
+  void *private_data;
+} mpu_ctx_t;
+
+typedef struct mpu_module
+{
+  long (*ioctl)(mpu_ctx_t *ctx, mpu_ioctl_call_t *call, dev_t dev);
+} mpu_module_t;
+
+typedef struct mpu_hook_instance
+{
+  mpu_module_t *module;
+  mpu_ctx_t *ctx;
+} mpu_hook_instance_t;
+
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
-typedef asmlinkage long (*ioctl_fn)(const struct pt_regs *);
+typedef long (*ioctl_fn)(const struct pt_regs *);
+#else
+typedef long (*ioctl_fn)(unsigned int, unsigned int, unsigned long);
+#endif
 
-typedef struct mpu_ioctl_private_s
+typedef struct mpu_ioctl_private
 {
   mpu_ioctl_call_t c;
   ioctl_fn ioctl;
   const struct pt_regs *regs;
 } mpu_ioctl_private_t;
 
-static asmlinkage long mpu_hooked_ioctl(const struct pt_regs *regs);
-#else
-typedef asmlinkage long (*ioctl_fn)(unsigned int fd, unsigned int cmd, unsigned long arg);
+// 全局变量
+static ioctl_fn orig_sys_ioctl;
+static mpu_hook_instance_t mpu_hook_instance;
 
-typedef struct mpu_ioctl_private_s
-{
-  mpu_ioctl_call_t c;
-  ioctl_fn ioctl;
-} mpu_ioctl_private_t;
-
-static asmlinkage long mpu_hooked_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg);
-#endif // CONFIG_ARCH_HAS_SYSCALL_WRAPPER
-
-// all its fields are immutable without ownership
-typedef struct mpu_syscall_hook_s
-{
-  mpu_module_t *module;
-  mpu_ctx_t *ctx;
-  unsigned long **syscall_tbl;
-  ioctl_fn ioctl;
-} mpu_syscall_hook_t;
-
-static mpu_syscall_hook_t mpu_hook_instance;
-
+// 获取文件描述符对应的设备号
 static dev_t get_rdev(unsigned int fd)
 {
   struct fd f = fdget(fd);
-  struct inode *inode;
-  dev_t rdev;
+  dev_t dev = 0;
 
-  if (f.file)
-  {
-    inode = FILE_INODE(f.file);
-    if (inode)
-    {
-      rdev = inode->i_rdev;
-    }
-    fdput(f);
-  }
-  return rdev;
+  if (!f.file)
+    return 0;
+
+  if (f.file->f_inode)
+    dev = f.file->f_inode->i_rdev;
+
+  fdput(f);
+  return dev;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
-static inline void write_cr0_forced(unsigned long val)
-{
-	unsigned long __force_order;
-
-	asm volatile(
-		"mov %0, %%cr0"
-		: "+r"(val), "+m"(__force_order));
-}
-#define WRITE_CR0(f) write_cr0_forced(f)
+// ftrace 回调函数和相关结构
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+#ifndef FTRACE_OPS_FL_RECURSION_SAFE
+// 如果 RECURSION_SAFE 不存在，就使用原始的 RECURSION 标志
+#define FTRACE_OPS_FL_RECURSION_SAFE FTRACE_OPS_FL_RECURSION
 #else
-#define WRITE_CR0(f) write_cr0(f)
+#define FTRACE_OPS_FL_RECURSION FTRACE_OPS_FL_RECURSION_SAFE
+#endif
 #endif
 
-static void write_syscall(unsigned long **syscall_tbl, ioctl_fn sys_ioctl)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+static unsigned long lookup_name(const char *name)
 {
-  unsigned long local_cr0;
+  struct kprobe kp = {
+      .symbol_name = name};
+  unsigned long retval;
 
-  local_cr0 = read_cr0();
-  WRITE_CR0(local_cr0 & ~0x00010000);
-  syscall_tbl[__NR_ioctl] = (unsigned long *)sys_ioctl;
-  WRITE_CR0(local_cr0);
+  if (register_kprobe(&kp) < 0)
+    return 0;
+  retval = (unsigned long)kp.addr;
+  unregister_kprobe(&kp);
+  return retval;
 }
-
-typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
-static kallsyms_lookup_name_t my_kallsyms_lookup_name;
-
-static struct kprobe kp = {
-        .symbol_name = "kallsyms_lookup_name"
-};
-
-int mpu_init_ioctl_hook(mpu_module_t *module, mpu_ctx_t *ctx)
-{
-  unsigned long **syscall_tbl;
-  ioctl_fn sys_ioctl;
-
-  if (!module || !module->ioctl || !ctx)
-  {
-    return -EINVAL;
-  }
-    int ret;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,7,0)
-    // 动态获取 kallsyms_lookup_name 地址（5.7+）
-    ret = register_kprobe(&kp);
-    if (ret < 0) {
-        pr_err("kprobe register failed: %d\n", ret);
-        return ret;
-    }
-    // 保存符号地址并卸载 kprobe
-    my_kallsyms_lookup_name = (kallsyms_lookup_name_t)kp.addr;
-    unregister_kprobe(&kp);
 #else
-    // 旧内核直接使用导出的符号
-    my_kallsyms_lookup_name = kallsyms_lookup_name;
+static unsigned long lookup_name(const char *name)
+{
+  return kallsyms_lookup_name(name);
+}
 #endif
-//    syscall_tbl = (unsigned long **)kallsyms_lookup_name("sys_call_table");
-    if (!my_kallsyms_lookup_name) {
-        pr_err("kallsyms_lookup_name not found\n");
-        return -ENOENT;
-    }
-    // 查找 sys_call_table
-    syscall_tbl = (unsigned long **)my_kallsyms_lookup_name("sys_call_table");
-  if (!syscall_tbl)
+
+static struct ftrace_hook
+{
+  const char *name;
+  void *function;
+  void *original;
+  unsigned long address;
+  struct ftrace_ops ops;
+} ioctl_hook;
+
+static int fh_resolve_hook_address(struct ftrace_hook *hook)
+{
+  hook->address = lookup_name(hook->name);
+  if (!hook->address)
   {
-    return -ENXIO;
+    pr_err("未找到函数: %s\n", hook->name);
+    return -ENOENT;
   }
-  sys_ioctl = (ioctl_fn)syscall_tbl[__NR_ioctl];
-
-  mpu_hook_instance.module = module;
-  mpu_hook_instance.ctx = ctx;
-  mpu_hook_instance.syscall_tbl = syscall_tbl;
-  mpu_hook_instance.ioctl = sys_ioctl;
-
-  // prevent any re-ordering causing accessing null mpu_hook_instance when hook triggered
-  barrier();
-  write_syscall(syscall_tbl, mpu_hooked_ioctl);
-
+  *((unsigned long *)hook->original) = hook->address;
   return 0;
 }
 
-// if module is un-loaded but still retain hooked ioctl address
-// the kernel will be panic
-void mpu_exit_ioctl_hook(void)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+static void notrace fh_ftrace_thunk(unsigned long ip, unsigned long parent_ip,
+                                    struct ftrace_ops *ops, struct ftrace_regs *fregs)
 {
-  if (mpu_hook_instance.syscall_tbl && mpu_hook_instance.ioctl)
-  {
-    write_syscall(mpu_hook_instance.syscall_tbl, mpu_hook_instance.ioctl);
-  }
+  struct ftrace_hook *hook = container_of(ops, struct ftrace_hook, ops);
+  struct pt_regs *regs = ftrace_get_regs(fregs);
+
+  if (!within_module(parent_ip, THIS_MODULE))
+    regs->ip = (unsigned long)hook->function;
+}
+#else
+static void notrace fh_ftrace_thunk(unsigned long ip, unsigned long parent_ip,
+                                    struct ftrace_ops *ops, struct pt_regs *regs)
+{
+  struct ftrace_hook *hook = container_of(ops, struct ftrace_hook, ops);
+
+  if (!within_module(parent_ip, THIS_MODULE))
+    regs->ip = (unsigned long)hook->function;
+}
+#endif
+
+static int fh_install_hook(struct ftrace_hook *hook)
+{
+    int err;
+    
+    err = fh_resolve_hook_address(hook);
+    if (err)
+        return err;
+        
+    hook->ops.func = fh_ftrace_thunk;
+    hook->ops.flags = FTRACE_OPS_FL_SAVE_REGS
+                    | FTRACE_OPS_FL_RECURSION  // 使用标准的宏，不尝试重定义
+                    | FTRACE_OPS_FL_IPMODIFY;
+                    
+    err = ftrace_set_filter_ip(&hook->ops, hook->address, 0, 0);
+    if (err) {
+        pr_err("ftrace_set_filter_ip() failed: %d\n", err);
+        return err;
+    }
+    
+    err = register_ftrace_function(&hook->ops);
+    if (err) {
+        pr_err("register_ftrace_function() failed: %d\n", err);
+        ftrace_set_filter_ip(&hook->ops, hook->address, 1, 0);
+        return err;
+    }
+    
+    return 0;
 }
 
+static void fh_remove_hook(struct ftrace_hook *hook)
+{
+  int err;
+
+  err = unregister_ftrace_function(&hook->ops);
+  if (err)
+    pr_err("unregister_ftrace_function() failed: %d\n", err);
+
+  err = ftrace_set_filter_ip(&hook->ops, hook->address, 1, 0);
+  if (err)
+    pr_err("ftrace_set_filter_ip() failed: %d\n", err);
+}
+
+// 系统调用钩子函数
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 static asmlinkage long mpu_hooked_ioctl(const struct pt_regs *regs)
 {
@@ -185,7 +207,7 @@ static asmlinkage long mpu_hooked_ioctl(const struct pt_regs *regs)
           .cmd = (unsigned int)regs->si,
           .arg = (unsigned long)regs->dx,
       },
-      .ioctl = mpu_hook_instance.ioctl,
+      .ioctl = orig_sys_ioctl,
       .regs = regs,
   };
   dev_t dev = get_rdev(pc.c.fd);
@@ -206,7 +228,7 @@ static asmlinkage long mpu_hooked_ioctl(unsigned int fd, unsigned int cmd, unsig
           .cmd = cmd,
           .arg = arg,
       },
-      .ioctl = mpu_hook_instance.ioctl,
+      .ioctl = orig_sys_ioctl,
   };
   dev_t dev = get_rdev(fd);
   return mpu_hook_instance.module->ioctl(mpu_hook_instance.ctx, &pc.c, dev);
@@ -217,4 +239,76 @@ long mpu_call_ioctl(mpu_ioctl_call_t *c)
   mpu_ioctl_private_t *pc = container_of(c, mpu_ioctl_private_t, c);
   return pc->ioctl(c->fd, c->cmd, c->arg);
 }
-#endif // CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+#endif
+
+// 添加一个查找系统调用的函数
+static int find_syscall(struct ftrace_hook *hook, const char *base_name)
+{
+  const char *prefixes[] = {
+    "__x64_sys_",  // x86_64 Linux 4.17+
+    "__ia32_sys_", // ia32 兼容性
+    "__se_sys_",   // 安全模式
+    "__do_sys_",   // 某些内部封装
+    "sys_",        // 传统命名
+    NULL
+  };
+  int i;
+  
+  for (i = 0; prefixes[i] != NULL; i++) {
+    // 使用全局变量保存系统调用名称
+    snprintf(saved_syscall_name, sizeof(saved_syscall_name), "%s%s", prefixes[i], base_name);
+    hook->name = saved_syscall_name;
+    hook->address = lookup_name(hook->name);
+    
+    if (hook->address) {
+      *((unsigned long*)hook->original) = hook->address;
+      pr_info("mpu: 找到系统调用: %s @ 0x%lx\n", hook->name, hook->address);
+      return 0;
+    }
+  }
+  
+  pr_err("mpu: 无法找到任何 %s 系统调用变体\n", base_name);
+  return -ENOENT;
+}
+
+int mpu_init_ioctl_hook(mpu_module_t *module, mpu_ctx_t *ctx)
+{
+  int ret;
+
+  if (!module || !module->ioctl || !ctx)
+  {
+    return -EINVAL;
+  }
+
+  // 清空并初始化 hook 结构体
+  memset(&ioctl_hook, 0, sizeof(ioctl_hook));
+  
+  mpu_hook_instance.module = module;
+  mpu_hook_instance.ctx = ctx;
+  
+  // 设置 ftrace 钩子
+  ioctl_hook.function = mpu_hooked_ioctl;
+  ioctl_hook.original = &orig_sys_ioctl;
+
+  // 寻找正确的系统调用
+  ret = find_syscall(&ioctl_hook, "ioctl");
+  if (ret) {
+    pr_err("mpu: 找不到 ioctl 系统调用\n");
+    return ret;
+  }
+
+  ret = fh_install_hook(&ioctl_hook);
+  if (ret) {
+    pr_err("mpu: 安装 ioctl 钩子失败: %d\n", ret);
+    return ret;
+  }
+
+  pr_info("mpu: 系统调用钩子已成功安装\n");
+  return 0;
+}
+
+void mpu_exit_ioctl_hook(void)
+{
+  fh_remove_hook(&ioctl_hook);
+  pr_info("mpu: 系统调用钩子已移除\n");
+}
