@@ -85,12 +85,17 @@ static dev_t get_rdev(unsigned int fd)
 
 // ftrace 回调函数和相关结构
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+// 5.11+ 内核
 #ifndef FTRACE_OPS_FL_RECURSION_SAFE
-// 如果 RECURSION_SAFE 不存在，就使用原始的 RECURSION 标志
 #define FTRACE_OPS_FL_RECURSION_SAFE FTRACE_OPS_FL_RECURSION
-#else
-#define FTRACE_OPS_FL_RECURSION FTRACE_OPS_FL_RECURSION_SAFE
 #endif
+#define MPU_FTRACE_RECURSION_FLAG FTRACE_OPS_FL_RECURSION_SAFE
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+// 5.4 - 5.10 内核
+#define MPU_FTRACE_RECURSION_FLAG FTRACE_OPS_FL_RECURSION_SAFE
+#else
+// 5.3 及更早版本
+#define MPU_FTRACE_RECURSION_FLAG FTRACE_OPS_FL_RECURSION
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
@@ -165,7 +170,7 @@ static int fh_install_hook(struct ftrace_hook *hook)
         
     hook->ops.func = fh_ftrace_thunk;
     hook->ops.flags = FTRACE_OPS_FL_SAVE_REGS
-                    | FTRACE_OPS_FL_RECURSION  // 使用标准的宏，不尝试重定义
+                    | MPU_FTRACE_RECURSION_FLAG  // 使用统一宏
                     | FTRACE_OPS_FL_IPMODIFY;
                     
     err = ftrace_set_filter_ip(&hook->ops, hook->address, 0, 0);
